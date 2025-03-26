@@ -64,7 +64,7 @@ target_link_libraries(
         otterbrix::index
         otterbrix::logical_plan
         spdlog::spdlog
-        abseil::abseil
+#        abseil::abseil
         Boost::boost
 )
 

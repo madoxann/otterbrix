@@ -1,6 +1,7 @@
 #pragma once
 
 #include <components/document/impl/document.hpp>
+#include <string>
 #include <cstring>
 #include <vector>
 

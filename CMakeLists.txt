@@ -87,6 +87,15 @@ find_package(Sanitizers REQUIRED)
 # conan
 message(STATUS "DCMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")
 
+
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+
+#include(${CMAKE_BINARY_DIR}/conan_paths.cmake)
+set(CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR} ${CMAKE_MODULE_PATH})
+
+include_directories(SYSTEM ${CONAN_INCLUDE_DIRS})
+conan_basic_setup(NO_OUTPUT_DIRS TARGETS KEEP_RPATHS)
+
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)
 endif()
@@ -97,7 +106,7 @@ find_package(pybind11 2.10.0 REQUIRED)
 find_package(msgpack 4.1.1 REQUIRED)
 find_package(Catch2 2.13.7 REQUIRED)
 find_package(Crc32c 1.1.2 REQUIRED)
-find_package(absl 20230802.1 REQUIRED)
+find_package(absl REQUIRED)
 find_package(benchmark 1.6.1 REQUIRED)
 find_package(ZLIB 1.2.12 REQUIRED)
 find_package(BZip2 1.0.8 REQUIRED)
