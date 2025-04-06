@@ -1,12 +1,16 @@
 project(distributed_plan CXX)
 
 set(SOURCE_${PROJECT_NAME}
-        catalog/analyze.cpp
+        meta/analyze.cpp
+        meta/catalog.cpp
+        meta/collection_info.cpp
+
         consistent_hashing/hash_ring.cpp
+        consistent_hashing/cluster_hash_ring.cpp
         consistent_hashing/murmur3.cpp
 
         distributed_planner.cpp
-        impl/plan_agg_upd_del.cpp
+        impl/plan_common_distribute.cpp
         impl/plan_collection.cpp
         impl/plan_database.cpp
         impl/plan_insert.cpp

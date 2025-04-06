@@ -8,7 +8,8 @@
 struct shard_distribution {
     std::unordered_map<consistent_hashing::node_id_t, uint64_t> records_per_node{};
 
-    void for_each_populated(std::function<void(consistent_hashing::node_id_t)> fun) const {
+    template<typename F, typename = std::enable_if_t<std::is_invocable_v<F, consistent_hashing::node_id_t>>>
+    void for_each_populated(F&& fun) const {
         for (const auto& [id, records] : records_per_node) {
             if (records) {
                 fun(id);

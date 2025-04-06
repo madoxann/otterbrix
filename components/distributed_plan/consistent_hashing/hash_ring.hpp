@@ -5,6 +5,10 @@
 #include <map>
 
 namespace consistent_hashing {
+    using token_array_t = std::array<token_t, CLUSTER_VNODES>;
+
+    class cluster_hash_ring;
+
     class hash_ring {
     public:
         hash_ring(const std::vector<physical_node>& nodes, std::mt19937_64& rng)
@@ -19,7 +23,12 @@ namespace consistent_hashing {
         [[nodiscard]] node_id_t get_node_by_key(components::document::value_t value) const;
 
     private:
-        void add_node_(size_t node_id, std::mt19937_64& rng);
+        friend class cluster_hash_ring;
+
+        hash_ring()
+            : token_to_node() {}
+
+        token_array_t add_node_(size_t node_id, std::mt19937_64& rng);
 
         std::map<token_t, node_id_t> token_to_node; // Map from token to node
     };

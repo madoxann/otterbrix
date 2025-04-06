@@ -1,4 +1,3 @@
-#include "distributed_plan/catalog/analyze.hpp"
 #include "distributed_plan/distributed_planner.hpp"
 #include "distributed_plan/local_join.hpp"
 
@@ -8,28 +7,29 @@ namespace distributed_plan {
     namespace {
         plan_id_t build_aggregate_plan(std::pmr::memory_resource* resource,
                                        collection_full_name_t name,
-                                       const collection_info& coll,
+                                       const meta::collection_info& coll,
                                        distributed_plan_t& plan) {
+            auto serial_agg = logical_plan::make_node_aggregate(resource, name)->to_string();
             if (!coll.distrib_info) {
                 plan_node_id_t agg = distributed_planner::get_next_plan_id(coll.primary_node, plan);
-                plan[coll.primary_node].emplace_back(logical_plan::make_node_aggregate(resource, name));
+                plan[coll.primary_node].emplace_back(std::move(serial_agg));
                 return plan_id_t{agg};
             }
 
             plan_id_t plan_id{};
             coll.distrib_info->distribution.for_each_populated([&](const auto& id) {
                 plan_id.push_back(distributed_planner::get_next_plan_id(id, plan));
-                plan[id].emplace_back(logical_plan::make_node_aggregate(resource, name));
+                plan[id].emplace_back(serial_agg);
             });
 
             return plan_id;
         }
 
         std::optional<std::pair<logical_plan::node_join_ptr, consistent_hashing::node_id_t>>
-        join_dfs(const components::logical_plan::node_join_t& node,
+        join_dfs(const logical_plan::node_join_t& node,
                  distributed_plan_t& plan,
                  std::optional<local_join_node>& local_join,
-                 catalog& meta) {
+                 meta::catalog& meta) {
             if (node.children().front()->type() == logical_plan::node_type::join_t) {
                 // recursion
                 // check structure
@@ -66,7 +66,7 @@ namespace distributed_plan {
 
                         // extension failed, save node-local subtree
                         plan_node_id_t&& saved_join = distributed_planner::get_next_plan_id(res->second, plan);
-                        plan[res->second].emplace_back(prev_join);
+                        plan[res->second].emplace_back(prev_join->to_string());
 
                         assert(!local_join); // leaf did not create local_join, because extension failed
                         local_join.emplace(local_join_node(plan_id_t{std::move(saved_join)},
@@ -135,8 +135,7 @@ namespace distributed_plan {
         }
     } // namespace
 
-    void distributed_planner::plan_join(components::logical_plan::node_ptr node,
-                                        distributed_plan::distributed_plan_t& plan) {
+    std::optional<local_plan_t> distributed_planner::plan_join(logical_plan::node_ptr node, distributed_plan_t& plan) {
         auto node_data = dynamic_cast<logical_plan::node_join_t&>(*node);
 
         std::optional<local_join_node> local_join;
@@ -144,12 +143,12 @@ namespace distributed_plan {
 
         if (node_local.has_value()) {
             // congrats, we can execute everything on a single node
-            plan[node_local->second].emplace_back(node_local->first);
-            return;
+            plan[node_local->second].emplace_back(node_local->first->to_string());
+            return {};
         }
 
         // otherwise, join_dfs filled plan with needed aggregates, now we need to execute them
         assert(local_join); // local plan must exist at this point
-        // TODO: store local_join somewhere for later execution
+        return std::move(local_join.value());
     }
 } // namespace distributed_plan

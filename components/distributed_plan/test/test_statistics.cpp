@@ -1,9 +1,8 @@
-#include "distributed_plan/catalog/analyze.hpp"
 #include "distributed_plan/consistent_hashing/hash_ring.hpp"
 
 #include <catch2/catch.hpp>
 
-#define private public
+//#define private public
 #include "distributed_plan/distributed_planner.hpp"
 
 namespace {
@@ -35,7 +34,7 @@ TEST_CASE("distributed_plan::db_count") {
     REQUIRE(stats.node_db_loads[1] == 0);
 }
 
-TEST_CASE("distributed_plan::collection_count") {
+TEST_CASE("distributed_plan::collection_stats") {
     auto copy = single;
     distributed_plan::distributed_planner planner(std::move(copy), rng);
     auto& stats = planner.meta;
@@ -51,6 +50,13 @@ TEST_CASE("distributed_plan::collection_count") {
 
     planner.create_plan("DROP TABLE db_name.test1; DROP TABLE db_name.test2; DROP TABLE db_name.test3;");
     REQUIRE(db_name.collections.size() == 1);
+
+    planner.create_plan("CREATE INDEX base ON db_name.test (count);");
+    REQUIRE(db_name.collections.at("test").indexes.size() == 1);
+    REQUIRE(db_name.collections.at("test").indexes.at("base").back().as_string() == "count");
+
+    planner.create_plan("DROP INDEX db_name.test.base;");
+    REQUIRE(db_name.collections.at("test").indexes.size() == 0);
 }
 
 TEST_CASE("distributed_plan::record_count") {

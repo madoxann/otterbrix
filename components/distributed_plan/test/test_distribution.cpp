@@ -1,10 +1,9 @@
-#include "distributed_plan/catalog/analyze.hpp"
-#include "distributed_plan/consistent_hashing/hash_ring.hpp"
+#include "distributed_plan/consistent_hashing/cluster_graph.hpp"
 #include "distributed_plan/consistent_hashing/murmur3.hpp"
 
 #include <catch2/catch.hpp>
 
-#define private public
+//#define private public
 #include "distributed_plan/distributed_planner.hpp"
 
 namespace {
@@ -45,6 +44,7 @@ namespace {
 
 TEST_CASE("distributed_plan::record_distribution") {
     auto copy = three;
+
     distributed_plan::distributed_planner planner(std::move(copy), rng);
     auto& stats = planner.meta;
     planner.create_plan("CREATE DATABASE db_name; CREATE TABLE db_name.test();");
@@ -52,20 +52,20 @@ TEST_CASE("distributed_plan::record_distribution") {
 
     SECTION("Hash ring node selection") {
         // it's a RING after all...
-        REQUIRE(stats.hash_ring.get_node_by_hash(0) == 3);
-        REQUIRE(stats.hash_ring.get_node_by_hash(std::numeric_limits<uint64_t>::max()) == 3);
+        REQUIRE(stats.get_hash_ring().get_node_by_hash(0) == 3);
+        REQUIRE(stats.get_hash_ring().get_node_by_hash(std::numeric_limits<uint64_t>::max()) == 3);
 
-        REQUIRE(stats.hash_ring.get_node_by_hash(3903822373903432379) == 2);
-        REQUIRE(stats.hash_ring.get_node_by_hash(7030320816992882670) == 1);
+        REQUIRE(stats.get_hash_ring().get_node_by_hash(3903822373903432379) == 2);
+        REQUIRE(stats.get_hash_ring().get_node_by_hash(7030320816992882670) == 1);
     }
 
     SECTION("Loads are calculated correctly") {
-        node_load_t expected_loads = {{1, 0}, {2, 0}, {3, 0}};
+        meta::node_load_t expected_loads = {{1, 0}, {2, 0}, {3, 0}};
 
         for (int64_t val = 1; val < 11; val++) {
             const uint64_t m = 0xc6a4a7935bd1e995ULL;
             uint64_t h = 0x8445d61a4e774912ULL ^ (sizeof(int64_t) * m);
-            expected_loads[stats.hash_ring.get_node_by_hash(
+            expected_loads[stats.get_hash_ring().get_node_by_hash(
                 consistent_hashing::murmurhash3_x64_128(&val, sizeof(int64_t), h))]++;
         }
 

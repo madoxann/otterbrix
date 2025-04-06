@@ -5,7 +5,7 @@ add_definitions(-DDEV_MODE)
 set(${PROJECT_NAME}_SOURCES
         test_statistics.cpp
         test_distribution.cpp
-        test_distributed_plan.cpp
+        test_plan.cpp
 )
 
 add_executable(${PROJECT_NAME} main.cpp ${${PROJECT_NAME}_SOURCES})

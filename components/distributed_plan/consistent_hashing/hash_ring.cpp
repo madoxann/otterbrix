@@ -64,9 +64,10 @@ namespace consistent_hashing {
         return get_node_by_hash(hash);
     }
 
-    void hash_ring::add_node_(size_t node_id, std::mt19937_64& rng) {
+    token_array_t hash_ring::add_node_(size_t node_id, std::mt19937_64& rng) {
         static std::uniform_int_distribution<token_t> dist(std::numeric_limits<token_t>::min(),
                                                            std::numeric_limits<token_t>::max());
+        token_array_t tokens;
         uint64_t remaining = CLUSTER_VNODES;
 
         if (token_to_node.size() + CLUSTER_VNODES > std::numeric_limits<token_t>::max()) {
@@ -76,8 +77,11 @@ namespace consistent_hashing {
         while (remaining) {
             if (token_t tkn = dist(rng); token_to_node.find(tkn) == token_to_node.end()) {
                 token_to_node[tkn] = node_id;
+                tokens[remaining - 1] = tkn;
                 remaining--;
             }
         }
+
+        return tokens;
     }
 } // namespace consistent_hashing
