@@ -11,14 +11,12 @@ namespace consistent_hashing {
 
         hash_ring full_ring;
         for (const auto& node : nodes) {
-            // yup, we need to traverse all graph, but each node will get its complete migration ring for fast search
             auto tokens = full_ring.add_node_(node.id(), rng);
 
-            for (auto [origin, edges] : graph.graph()) {
-                if (edges.find(node.id()) != edges.end()) {
-                    for (auto tkn : tokens) {
-                        rings.at(origin).token_to_node.emplace(std::make_pair(tkn, node.id()));
-                    }
+            // add tokens to all connected rings
+            for (auto origin : graph.graph().at(node.id())) {
+                for (auto tkn : tokens) {
+                    rings.at(origin).token_to_node.emplace(std::make_pair(tkn, node.id()));
                 }
             }
         }
