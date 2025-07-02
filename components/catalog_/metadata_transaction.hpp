@@ -1,6 +1,7 @@
 #pragma once
 
 #include "table_metadata.hpp"
+#include <mutex>
 
 namespace catalog {
     class transaction_scope;
@@ -19,27 +20,28 @@ namespace catalog {
         metadata_transaction& update_schema(const schema& new_schema);
         metadata_transaction& update_uuid(table_uuid new_uuid);
 
-        metadata_transaction& add_column(const std::string& name,
+        metadata_transaction& add_column(const std::pmr::string& name,
                                          const iceberg::iceberg_t& type,
                                          bool required = false,
-                                         const std::string& doc = "");
-        metadata_transaction& add_column(const std::string& parent,
-                                         const std::string& name,
+                                         const std::pmr::string& doc = "");
+        metadata_transaction& add_column(const std::pmr::string& parent,
+                                         const std::pmr::string& name,
                                          const iceberg::iceberg_t& type,
                                          bool required = false,
-                                         const std::string& doc = "");
-        metadata_transaction& delete_column(const std::string& name);
-        metadata_transaction& rename_column(const std::string& name, const std::string& new_name);
-        metadata_transaction& update_column(const std::string& name, const iceberg::iceberg_t& new_type);
-        metadata_transaction& update_column_doc(const std::string& name, const std::string& doc);
-        metadata_transaction& make_optional(const std::string& name);
-        metadata_transaction& make_required(const std::string& name);
+                                         const std::pmr::string& doc = "");
+        metadata_transaction& delete_column(const std::pmr::string& name);
+        metadata_transaction& rename_column(const std::pmr::string& name, const std::pmr::string& new_name);
+        metadata_transaction& update_column(const std::pmr::string& name, const iceberg::iceberg_t& new_type);
+        metadata_transaction& update_column_doc(const std::pmr::string& name, const std::pmr::string& doc);
+        metadata_transaction& make_optional(const std::pmr::string& name);
+        metadata_transaction& make_required(const std::pmr::string& name);
 
-        metadata_transaction& savepoint(const std::string& name);
-        metadata_transaction& rollback_to_savepoint(const std::string& name);
+        metadata_transaction& savepoint(const std::pmr::string& name);
+        metadata_transaction& rollback_to_savepoint(const std::pmr::string& name);
 
     private:
-        metadata_transaction(std::reference_wrapper<table_metadata> meta_ref); // transactions encapsulates state
+        metadata_transaction(std::pmr::memory_resource* resource,
+                             std::reference_wrapper<table_metadata> meta_ref); // transactions encapsulates state
 
         void enusureActive();
         void commit();
@@ -48,7 +50,8 @@ namespace catalog {
         State state_ = State::ACTIVE;
         std::reference_wrapper<table_metadata> meta_ref; // writes by reference
         table_metadata meta;                             // mutates during transaction, copies state in constructor
-        std::map<std::string, table_metadata> savepoints;
+        std::pmr::map<std::pmr::string, table_metadata> savepoints;
+        mutable std::mutex table_mutex;
 
         friend class transaction_scope;
     };

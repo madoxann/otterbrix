@@ -5,6 +5,8 @@
 
 namespace catalog {
     struct table_metadata {
+        table_metadata(std::pmr::memory_resource* resource);
+
         // Partition specs - no partitioning in otterbrix
         //        std::vector<PartitionSpec> partition_specs;
         //        SpecId default_spec_id;
@@ -21,10 +23,10 @@ namespace catalog {
         //        std::vector<MetadataLogEntry> metadata_log;
 
         // Helper methods
-        schema currentSchema() const;
+        schema current_schema() const;
 
-        nlohmann::json toJson() const;
-        static table_metadata fromJson(const nlohmann::json& j);
+        std::pmr::string to_json() const;
+        static table_metadata from_json(const std::string& j, std::pmr::memory_resource* resource);
 
     private:
         table_uuid table_uuid;
