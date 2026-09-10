@@ -16,6 +16,7 @@
 
 // Kept out of wal_contract.hpp to avoid an include cycle (these pull back only services/wal/base.hpp).
 #include <services/disk/manager_disk.hpp>
+#include <core/hop_trace.hpp>
 #include <services/dispatcher/dispatcher.hpp>
 #include <services/index/index_rebuild_driver.hpp>
 #include <services/index/manager_index.hpp>
@@ -148,6 +149,11 @@ namespace services::wal {
                 for (auto& e : in_flight) {
                     if (e.pending_msg && !e.behavior) {
                         e.behavior = behavior(e.pending_msg.get());
+                        core::hop::emit("manager_wal pump created msg=%p cmd=%llu busy=%d in_flight=%zu",
+                                        static_cast<void*>(e.pending_msg.get()),
+                                        static_cast<unsigned long long>(e.pending_msg->command()),
+                                        e.behavior.is_busy() ? 1 : 0,
+                                        in_flight.size());
                         made_progress = true;
                         break;
                     }
@@ -158,10 +164,12 @@ namespace services::wal {
 
                 {
                     actor_zeta::detail::coroutine_handle<> cont{};
+                    actor_zeta::mailbox::message* resumed_msg = nullptr;
                     for (auto& e : in_flight) {
                         if (e.behavior.is_awaited_ready()) {
                             cont = e.behavior.take_awaited_continuation();
                             if (cont) {
+                                resumed_msg = e.pending_msg.get();
                                 break;
                             }
                         }
@@ -170,6 +178,9 @@ namespace services::wal {
 #ifdef DEV_MODE
                         services::dispatcher::note_pump_hop();
 #endif
+                        core::hop::emit("manager_wal pump resume msg=%p cmd=%llu",
+                                        static_cast<void*>(resumed_msg),
+                                        static_cast<unsigned long long>(resumed_msg->command()));
                         cont.resume();
                         continue;
                     }
@@ -177,6 +188,10 @@ namespace services::wal {
 
                 for (auto it = in_flight.begin(); it != in_flight.end();) {
                     if (it->behavior && it->behavior.done()) {
+                        core::hop::emit("manager_wal pump erase msg=%p cmd=%llu in_flight=%zu",
+                                        static_cast<void*>(it->pending_msg.get()),
+                                        static_cast<unsigned long long>(it->pending_msg->command()),
+                                        in_flight.size());
                         it = in_flight.erase(it);
                         made_progress = true;
                         break;
@@ -347,7 +362,15 @@ namespace services::wal {
         if (needs_sched) {
             scheduler_->enqueue(worker);
         }
+        core::hop::emit("manager_wal -> worker.commit sent txn=%llu wal_id=%llu needs_sched=%d",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned long long>(wal_id),
+                        needs_sched ? 1 : 0);
         auto result = co_await std::move(fut);
+        core::hop::emit("manager_wal <- worker.commit returned txn=%llu wal_id=%llu err=%d",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned long long>(wal_id),
+                        result.has_error() ? 1 : 0);
         if (result.has_error()) {
             // The commit marker isn't durable yet (missing from the journal, or under FULL not on the device);
             // returning wal_id would be exactly the lie this channel prevents, so auto-checkpoint is skipped too.
@@ -592,7 +615,16 @@ namespace services::wal {
         if (needs_sched) {
             scheduler_->enqueue(worker);
         }
+        core::hop::emit("manager_wal -> worker.insert sent txn=%llu oid=%u wal_id=%llu needs_sched=%d",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id),
+                        needs_sched ? 1 : 0);
         auto result = co_await std::move(fut);
+        core::hop::emit("manager_wal <- worker.insert returned txn=%llu oid=%u wal_id=%llu",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id));
         co_return std::move(result);
     }
 
@@ -681,7 +713,16 @@ namespace services::wal {
         if (needs_sched) {
             scheduler_->enqueue(worker);
         }
+        core::hop::emit("manager_wal -> worker.add_column sent txn=%llu oid=%u wal_id=%llu needs_sched=%d",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id),
+                        needs_sched ? 1 : 0);
         auto result = co_await std::move(fut);
+        core::hop::emit("manager_wal <- worker.add_column returned txn=%llu oid=%u wal_id=%llu",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id));
         co_return std::move(result);
     }
 

@@ -1,5 +1,7 @@
 #include "manager_disk_impl.hpp"
 
+#include <core/hop_trace.hpp>
+
 namespace services::disk {
 
     using namespace core::filesystem;
@@ -33,7 +35,18 @@ namespace services::disk {
         if (needs_sched) {
             scheduler_disk_->enqueue(agent.get());
         }
-        co_return co_await std::move(fut);
+        core::hop::emit("manager_disk -> agent[%lu].append_pg_catalog_row_inner sent txn=%llu oid=%u needs_sched=%d",
+                        static_cast<unsigned long>(idx),
+                        static_cast<unsigned long long>(ctx.txn.transaction_id),
+                        static_cast<unsigned>(table_oid),
+                        needs_sched ? 1 : 0);
+        auto appended = co_await std::move(fut);
+        core::hop::emit("manager_disk <- agent[%lu].append_pg_catalog_row_inner returned txn=%llu oid=%u err=%d",
+                        static_cast<unsigned long>(idx),
+                        static_cast<unsigned long long>(ctx.txn.transaction_id),
+                        static_cast<unsigned>(table_oid),
+                        appended.has_error() ? 1 : 0);
+        co_return std::move(appended);
     }
 
     manager_disk_t::unique_future<void> manager_disk_t::delete_pg_catalog_rows(execution_context_t ctx,

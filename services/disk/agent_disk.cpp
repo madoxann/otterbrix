@@ -11,6 +11,7 @@
 #include <components/vector/cell_equal.hpp>
 #include <components/vector/vector_operations.hpp>
 #include <core/file/local_file_system.hpp>
+#include <core/hop_trace.hpp>
 #include <services/dispatcher/dispatcher.hpp>
 
 namespace services::disk {
@@ -647,6 +648,11 @@ namespace services::disk {
                                                               txn.transaction_id,
                                                               db_oid);
                 add_column_future = std::move(scf);
+                core::hop::emit("agent_disk[%lu] -> wal.add_column sent txn=%llu oid=%u cols=%lu",
+                                static_cast<unsigned long>(pool_idx_),
+                                static_cast<unsigned long long>(txn.transaction_id),
+                                static_cast<unsigned>(table_oid),
+                                static_cast<unsigned long>(wal_added_columns.size()));
             }
 
             // CREATE INDEX backfill uses start_row as the row-id base, so it must match the materialized start.
@@ -663,7 +669,19 @@ namespace services::disk {
                                                         actual_count,
                                                         txn.transaction_id,
                                                         db_oid);
+            core::hop::emit("agent_disk[%lu] -> wal.insert sent, awaiting txn=%llu oid=%u add_column_pending=%d "
+                            "insert_ready=%d",
+                            static_cast<unsigned long>(pool_idx_),
+                            static_cast<unsigned long long>(txn.transaction_id),
+                            static_cast<unsigned>(table_oid),
+                            add_column_future.valid() ? 1 : 0,
+                            wf.is_ready() ? 1 : 0);
             auto wal_result = co_await std::move(wf);
+            core::hop::emit("agent_disk[%lu] <- wal.insert returned txn=%llu oid=%u add_column_ready=%d",
+                            static_cast<unsigned long>(pool_idx_),
+                            static_cast<unsigned long long>(txn.transaction_id),
+                            static_cast<unsigned>(table_oid),
+                            (add_column_future.valid() && add_column_future.is_ready()) ? 1 : 0);
             if (wal_result.has_error()) {
                 error(log_,
                       "agent_disk[{}]::storage_append_inner: the PHYSICAL_INSERT did not reach the journal for "
@@ -681,7 +699,16 @@ namespace services::disk {
             }
 
             if (add_column_future.valid()) {
+                core::hop::emit("agent_disk[%lu] awaiting wal.add_column txn=%llu oid=%u ready=%d",
+                                static_cast<unsigned long>(pool_idx_),
+                                static_cast<unsigned long long>(txn.transaction_id),
+                                static_cast<unsigned>(table_oid),
+                                add_column_future.is_ready() ? 1 : 0);
                 auto add_column_result = co_await std::move(add_column_future);
+                core::hop::emit("agent_disk[%lu] <- wal.add_column returned txn=%llu oid=%u",
+                                static_cast<unsigned long>(pool_idx_),
+                                static_cast<unsigned long long>(txn.transaction_id),
+                                static_cast<unsigned>(table_oid));
                 if (add_column_result.has_error()) {
                     error(log_,
                           "agent_disk[{}]::storage_append_inner: the PHYSICAL_ADD_COLUMN did not reach the "
@@ -701,8 +728,18 @@ namespace services::disk {
             }
         }
 
+        core::hop::emit("agent_disk[%lu] materialize start txn=%llu oid=%u rows=%llu",
+                        static_cast<unsigned long>(pool_idx_),
+                        static_cast<unsigned long long>(txn.transaction_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(actual_count));
         auto append_r =
             s->append(*data, txn.transaction_id != 0 ? txn : components::table::transaction_data{0, 0});
+        core::hop::emit("agent_disk[%lu] materialize done txn=%llu oid=%u err=%d",
+                        static_cast<unsigned long>(pool_idx_),
+                        static_cast<unsigned long long>(txn.transaction_id),
+                        static_cast<unsigned>(table_oid),
+                        append_r.has_error() ? 1 : 0);
         if (append_r.has_error()) {
             trace(log_,
                   "agent_disk[{}]::storage_append_inner: materialize failed for oid={} — surfacing error",
@@ -732,6 +769,10 @@ namespace services::disk {
                                                   : "; the rows were reverted and nothing was appended");
             co_return core::error_t{core::error_code_t::data_corruption, std::move(what)};
         }
+        core::hop::emit("agent_disk[%lu] storage_append_inner done txn=%llu oid=%u",
+                        static_cast<unsigned long>(pool_idx_),
+                        static_cast<unsigned long long>(txn.transaction_id),
+                        static_cast<unsigned>(table_oid));
         co_return std::make_pair(materialized_start, actual_count);
     }
 
@@ -2552,7 +2593,16 @@ namespace services::disk {
                                                         static_cast<std::uint64_t>(row.size()),
                                                         ctx.txn.transaction_id,
                                                         db_oid);
+            core::hop::emit("agent_disk[%lu] -> wal.insert(catalog) sent, awaiting txn=%llu oid=%u",
+                            static_cast<unsigned long>(pool_idx_),
+                            static_cast<unsigned long long>(ctx.txn.transaction_id),
+                            static_cast<unsigned>(table_oid));
             auto wal_result = co_await std::move(wf);
+            core::hop::emit("agent_disk[%lu] <- wal.insert(catalog) returned txn=%llu oid=%u err=%d",
+                            static_cast<unsigned long>(pool_idx_),
+                            static_cast<unsigned long long>(ctx.txn.transaction_id),
+                            static_cast<unsigned>(table_oid),
+                            wal_result.has_error() ? 1 : 0);
             if (wal_result.has_error()) {
                 error(log_,
                       "agent_disk[{}]::append_pg_catalog_row_inner: the catalog row's WAL record did not reach "

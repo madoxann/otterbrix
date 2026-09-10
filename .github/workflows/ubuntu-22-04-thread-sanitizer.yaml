@@ -4,9 +4,7 @@ on:
   push:
     paths-ignore:
       - '**.md'
-  pull_request:
-    paths-ignore:
-      - '**.md'
+  workflow_dispatch:
 
 jobs:
   run:
@@ -47,9 +45,11 @@ jobs:
           cmake  -G Ninja -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_TOOLCHAIN_FILE=./build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DDEV_MODE=ON -DEXAMPLE=ON -DENABLE_TSAN=ON ..
           cmake --build .
 
+      # B-068 hunt: no suppressions, so reports on the pumps' lock-free inboxes surface too; a longer
+      # history keeps the "previous access" stack of long-lived actor threads.
       - name: Test
         env:
-          TSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/tsan-suppressions.txt second_deadlock_stack=1
+          TSAN_OPTIONS: second_deadlock_stack=1 history_size=7
         run: |
           cd build
           ctest -C Release --output-on-failure

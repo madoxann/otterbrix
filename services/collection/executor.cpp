@@ -50,6 +50,7 @@
 #include <services/dispatcher/enrich_logical_plan.hpp>
 #include <services/dispatcher/resolve_type.hpp>
 #include <services/dispatcher/txn_messages.hpp>
+#include <core/hop_trace.hpp>
 #include <services/dispatcher/validate_logical_plan.hpp>
 
 using namespace components::cursor;
@@ -381,6 +382,8 @@ namespace services::collection::executor {
     executor_t::unique_future<execute_result_t>
     executor_t::execute_plan_full(components::session::session_id_t session,
                                   components::logical_plan::execution_plan_t plan) {
+        core::hop::emit("executor execute_plan_full enter session=%llu",
+                        static_cast<unsigned long long>(session.data()));
         using node_type = components::logical_plan::node_type;
         using components::logical_plan::node_aggregate_t;
         using components::logical_plan::node_catalog_resolve_t;

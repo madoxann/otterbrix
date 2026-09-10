@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <components/context/context.hpp>
 #include <components/context/execution_context.hpp>
+#include <core/hop_trace.hpp>
 #include <services/disk/manager_disk.hpp>
 #include <services/index/manager_index.hpp>
 #include <services/wal/manager_wal_replicate.hpp>
@@ -154,7 +155,14 @@ namespace components::operators {
                                                             exec_ctx,
                                                             table_oid_,
                                                             std::move(append_data));
+                core::hop::emit("insert-op -> manager_disk.storage_append sent txn=%llu oid=%u",
+                                static_cast<unsigned long long>(exec_ctx.txn.transaction_id),
+                                static_cast<unsigned>(table_oid_));
                 auto append_result = co_await std::move(af);
+                core::hop::emit("insert-op <- manager_disk.storage_append returned txn=%llu oid=%u err=%d",
+                                static_cast<unsigned long long>(exec_ctx.txn.transaction_id),
+                                static_cast<unsigned>(table_oid_),
+                                append_result.has_error() ? 1 : 0);
                 if (append_result.has_error()) {
                     co_return dml_detail::flush_outcome_t{append_result.error()};
                 }

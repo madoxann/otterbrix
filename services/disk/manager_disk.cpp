@@ -9,6 +9,7 @@
 #include <fstream>
 #include <limits>
 #include <services/dispatcher/dispatcher.hpp>
+#include <core/hop_trace.hpp>
 #include <services/wal/manager_wal_replicate.hpp>
 #include <system_error>
 #include <unordered_set>
@@ -425,6 +426,11 @@ namespace services::disk {
                     for (auto& e : in_flight) {
                         if (e.pending_msg && !e.behavior) {
                             e.behavior = behavior(e.pending_msg.get());
+                            core::hop::emit("manager_disk pump created msg=%p cmd=%llu busy=%d in_flight=%zu",
+                                            static_cast<void*>(e.pending_msg.get()),
+                                            static_cast<unsigned long long>(e.pending_msg->command()),
+                                            e.behavior.is_busy() ? 1 : 0,
+                                            in_flight.size());
                             progress = true;
                             break;
                         }
@@ -434,10 +440,12 @@ namespace services::disk {
                     }
                     {
                         actor_zeta::detail::coroutine_handle<> cont{};
+                        actor_zeta::mailbox::message* resumed_msg = nullptr;
                         for (auto& e : in_flight) {
                             if (e.behavior.is_awaited_ready()) {
                                 cont = e.behavior.take_awaited_continuation();
                                 if (cont) {
+                                    resumed_msg = e.pending_msg.get();
                                     break;
                                 }
                             }
@@ -446,6 +454,9 @@ namespace services::disk {
 #ifdef DEV_MODE
                             services::dispatcher::note_pump_hop();
 #endif
+                            core::hop::emit("manager_disk pump resume msg=%p cmd=%llu",
+                                            static_cast<void*>(resumed_msg),
+                                            static_cast<unsigned long long>(resumed_msg->command()));
                             cont.resume(); // disk: no poll_pending — no pending_<T>_ containers.
                             progress = true;
                             continue;
@@ -453,6 +464,10 @@ namespace services::disk {
                     }
                     for (auto it = in_flight.begin(); it != in_flight.end(); ++it) {
                         if (it->behavior && it->behavior.done()) {
+                            core::hop::emit("manager_disk pump erase msg=%p cmd=%llu in_flight=%zu",
+                                            static_cast<void*>(it->pending_msg.get()),
+                                            static_cast<unsigned long long>(it->pending_msg->command()),
+                                            in_flight.size());
                             in_flight.erase(it);
                             progress = true;
                             break;

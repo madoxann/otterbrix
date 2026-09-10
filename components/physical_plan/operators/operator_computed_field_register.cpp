@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include <core/hop_trace.hpp>
+
 namespace components::operators {
 
     namespace catalog = components::catalog;
@@ -64,7 +66,14 @@ namespace components::operators {
                 std::move(r_keys),
                 components::operators::make_key_chunk(resource_, table_oid_, std::string_view{col.name()}),
                 std::pmr::vector<std::uint64_t>{resource_});
+            core::hop::emit("cfr -> disk.read_chunks_by_key(pg_computed_column) sent txn=%llu oid=%u",
+                            static_cast<unsigned long long>(ctx->txn.transaction_id),
+                            static_cast<unsigned>(table_oid_));
             auto batches_r = co_await std::move(rf);
+            core::hop::emit("cfr <- disk.read_chunks_by_key(pg_computed_column) returned txn=%llu oid=%u err=%d",
+                            static_cast<unsigned long long>(ctx->txn.transaction_id),
+                            static_cast<unsigned>(table_oid_),
+                            batches_r.has_error() ? 1 : 0);
             if (batches_r.has_error()) {
                 // A failed pg_computed_column read is not a miss; treating it as one lets the
                 // operation proceed on data that was never read.
@@ -122,7 +131,14 @@ namespace components::operators {
                         std::move(t_keys),
                         components::operators::make_key_chunk(resource_, std::string_view{lookup}),
                         std::pmr::vector<std::uint64_t>{resource_});
+                    core::hop::emit("cfr -> disk.read_chunks_by_key(pg_type) sent txn=%llu oid=%u",
+                                    static_cast<unsigned long long>(ctx->txn.transaction_id),
+                                    static_cast<unsigned>(table_oid_));
                     auto type_batches_r = co_await std::move(tf);
+                    core::hop::emit("cfr <- disk.read_chunks_by_key(pg_type) returned txn=%llu oid=%u err=%d",
+                                    static_cast<unsigned long long>(ctx->txn.transaction_id),
+                                    static_cast<unsigned>(table_oid_),
+                                    type_batches_r.has_error() ? 1 : 0);
                     if (type_batches_r.has_error()) {
                         set_error(type_batches_r.error());
                         co_return;
@@ -170,7 +186,14 @@ namespace components::operators {
             auto [_oa, oaf] = actor_zeta::otterbrix::send(ctx->disk_address,
                                                           &services::disk::manager_disk_t::allocate_oids_batch,
                                                           std::size_t{1});
+            core::hop::emit("cfr -> disk.allocate_oids_batch sent txn=%llu oid=%u",
+                            static_cast<unsigned long long>(ctx->txn.transaction_id),
+                            static_cast<unsigned>(table_oid_));
             auto oid_batch = co_await std::move(oaf);
+            core::hop::emit("cfr <- disk.allocate_oids_batch returned txn=%llu oid=%u count=%zu",
+                            static_cast<unsigned long long>(ctx->txn.transaction_id),
+                            static_cast<unsigned>(table_oid_),
+                            oid_batch.size());
             if (oid_batch.empty()) {
                 set_error(core::error_t{
                     core::error_code_t::other_error,
@@ -247,8 +270,16 @@ namespace components::operators {
             }
             // Drain all, first error wins: the pg_computed_column row is the registration.
             core::error_t append_error = core::error_t::no_error();
+            core::hop::emit("cfr -> disk.append_pg_catalog_row x%zu sent txn=%llu oid=%u",
+                            append_futures.size(),
+                            static_cast<unsigned long long>(ctx->txn.transaction_id),
+                            static_cast<unsigned>(table_oid_));
             for (auto& af : append_futures) {
                 auto rng_r = co_await std::move(af);
+                core::hop::emit("cfr <- disk.append_pg_catalog_row returned txn=%llu oid=%u err=%d",
+                                static_cast<unsigned long long>(ctx->txn.transaction_id),
+                                static_cast<unsigned>(table_oid_),
+                                rng_r.has_error() ? 1 : 0);
                 if (rng_r.has_error()) {
                     if (!append_error.contains_error()) {
                         append_error = rng_r.error();

@@ -26,6 +26,8 @@
 #include <array>
 #include <functional>
 
+#include <core/hop_trace.hpp>
+
 using namespace components::cursor;
 
 namespace services::dispatcher {
@@ -98,6 +100,34 @@ namespace services::dispatcher {
                       "add a case to behavior() AND an entry to kBehaviorHandledIds");
     } // namespace
 
+    namespace {
+        // B-068 hunt: the dispatcher's own view of the stale awaits, the recent hop timeline and, when CI patched
+        // actor-zeta, every cooperative actor's mailbox/behavior state.
+        void dump_stall(std::pmr::list<manager_dispatcher_t::in_flight_entry_t>& in_flight, const char* reason) {
+            auto* out = core::hop::begin_dump(reason);
+            if (out == nullptr) {
+                return;
+            }
+            std::fprintf(out, "--- dispatcher in_flight (%zu)\n", in_flight.size());
+            for (auto& e : in_flight) {
+                std::fprintf(out,
+                             "  msg=%p cmd=%llu busy=%d awaited_ready=%d done=%d stale_ticks=%u poke_rounds=%u\n",
+                             static_cast<void*>(e.pending_msg.get()),
+                             static_cast<unsigned long long>(e.pending_msg->command()),
+                             e.behavior.is_busy() ? 1 : 0,
+                             e.behavior.is_awaited_ready() ? 1 : 0,
+                             e.behavior.done() ? 1 : 0,
+                             e.stale_ticks,
+                             e.poke_rounds);
+            }
+            core::hop::write_timeline(out);
+#ifdef ACTOR_ZETA_B068_DEBUG
+            actor_zeta::b068::write_actor_states(out);
+#endif
+            core::hop::end_dump(out);
+        }
+    } // namespace
+
     manager_dispatcher_t::manager_dispatcher_t(std::pmr::memory_resource* resource_ptr,
                                                actor_zeta::scheduler_raw scheduler,
                                                log_t& log,
@@ -141,6 +171,14 @@ namespace services::dispatcher {
             executors_.push_back(std::move(exec));
         }
         trace(log_, "manager_dispatcher_t: spawned {} executors with WAL/Disk/Index addresses", executor_pool_size_);
+#ifdef ACTOR_ZETA_B068_DEBUG
+        actor_zeta::b068::event_hook = [](const char* what, void* actor, const char* type, bool loud) {
+            core::hop::emit("actor-zeta %s actor=%p type=%s", what, actor, type);
+            if (loud) {
+                std::fprintf(stderr, "[actor-zeta b068] %s actor=%p type=%s\n", what, actor, type);
+            }
+        };
+#endif
 
         loop_thread_ = std::thread([this] {
             // ~20 hops at 100us floors a statement at ~3.5ms, so idle_wait must exceed in_flight_wait.
@@ -224,14 +262,23 @@ namespace services::dispatcher {
                     }
                 if (any_stale) {
                     constexpr uint32_t escalate_poke_rounds = 256;
+                    // A stall still standing 16x later is dumped again: what moved since, and what never did.
+                    constexpr uint32_t redump_poke_rounds = escalate_poke_rounds * 16;
                     bool escalate = false;
+                    bool redump = false;
                     for (auto& e : in_flight) {
                         if (e.behavior && !e.behavior.done() && e.behavior.is_busy() &&
                             !e.behavior.is_awaited_ready() && e.stale_ticks > stale_tick_threshold) {
                             if (++e.poke_rounds == escalate_poke_rounds) {
                                 escalate = true;
                             }
+                            if (e.poke_rounds == redump_poke_rounds) {
+                                redump = true;
+                            }
                         }
+                    }
+                    if (escalate || redump) {
+                        dump_stall(in_flight, escalate ? "watchdog escalation" : "watchdog stall persists");
                     }
                     if (escalate) {
                         warn(log_,
@@ -438,7 +485,14 @@ namespace services::dispatcher {
         if (needs_sched && executors_[pool_idx]) {
             scheduler_->enqueue(executors_[pool_idx].get());
         }
+        core::hop::emit("dispatcher -> executor[%zu].execute_plan_full sent session=%llu needs_sched=%d",
+                        pool_idx,
+                        static_cast<unsigned long long>(session.data()),
+                        needs_sched ? 1 : 0);
         auto exec_result = co_await std::move(future);
+        core::hop::emit("dispatcher <- executor[%zu].execute_plan_full returned session=%llu",
+                        pool_idx,
+                        static_cast<unsigned long long>(session.data()));
 
         if (!exec_result.applied_timezone.empty()) {
             auto tz_err = default_tz_cat_.set_timezone(

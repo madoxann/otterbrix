@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 
+#include <core/hop_trace.hpp>
+
 namespace services::wal {
 
     static std::string segment_filename(const std::string& db_dir_name, uint32_t index) {
@@ -135,6 +137,10 @@ namespace services::wal {
               wal_id,
               txn_id,
               row_count);
+        core::hop::emit("wal_worker insert start txn=%llu oid=%u wal_id=%llu",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id));
 
         encode_buf_.clear();
         // last_crc_ only takes the crc once append() accepts the record, so a refused write can't leave the chain
@@ -152,6 +158,7 @@ namespace services::wal {
         if (auto writer_error = ensure_writer(); writer_error.contains_error()) {
             co_return core::result_wrapper_t<wal::id_t>{std::move(writer_error)};
         }
+        core::hop::emit("wal_worker insert writer ready wal_id=%llu", static_cast<unsigned long long>(wal_id));
         if (auto append_error = writer_->append(encode_buf_.data(), encode_buf_.size(), wal_id);
             append_error.contains_error()) {
             error(log_,
@@ -163,6 +170,7 @@ namespace services::wal {
             co_return core::result_wrapper_t<wal::id_t>{std::move(append_error)};
         }
         last_crc_ = record_crc;
+        core::hop::emit("wal_worker insert appended wal_id=%llu", static_cast<unsigned long long>(wal_id));
 
         co_return core::result_wrapper_t<wal::id_t>{wal_id};
     }
@@ -263,6 +271,10 @@ namespace services::wal {
               wal_id,
               txn_id,
               column_count);
+        core::hop::emit("wal_worker add_column start txn=%llu oid=%u wal_id=%llu",
+                        static_cast<unsigned long long>(txn_id),
+                        static_cast<unsigned>(table_oid),
+                        static_cast<unsigned long long>(wal_id));
 
         encode_buf_.clear();
         const auto record_crc =
@@ -271,6 +283,7 @@ namespace services::wal {
         if (auto writer_error = ensure_writer(); writer_error.contains_error()) {
             co_return core::result_wrapper_t<wal::id_t>{std::move(writer_error)};
         }
+        core::hop::emit("wal_worker add_column writer ready wal_id=%llu", static_cast<unsigned long long>(wal_id));
         if (auto append_error = writer_->append(encode_buf_.data(), encode_buf_.size(), wal_id);
             append_error.contains_error()) {
             error(log_,
@@ -282,6 +295,7 @@ namespace services::wal {
             co_return core::result_wrapper_t<wal::id_t>{std::move(append_error)};
         }
         last_crc_ = record_crc;
+        core::hop::emit("wal_worker add_column appended wal_id=%llu", static_cast<unsigned long long>(wal_id));
 
         co_return core::result_wrapper_t<wal::id_t>{wal_id};
     }
@@ -302,6 +316,10 @@ namespace services::wal {
               transaction_id,
               commit_id,
               static_cast<int>(sync_mode));
+        core::hop::emit("wal_worker commit start txn=%llu wal_id=%llu sync=%d",
+                        static_cast<unsigned long long>(transaction_id),
+                        static_cast<unsigned long long>(wal_id),
+                        static_cast<int>(sync_mode));
 
         if (sync_mode == wal_sync_mode::OFF) {
             // OFF writes nothing, so the chain must not move either: a marker that never lands isn't the last record
@@ -329,7 +347,11 @@ namespace services::wal {
 
         // This call is the durability claim: under FULL, a failed fsync over a returned wal_id reports a commit that
         // never reached the device; under NORMAL a refused write still isn't in the journal.
+        core::hop::emit("wal_worker commit flush start wal_id=%llu", static_cast<unsigned long long>(wal_id));
         auto sync_error = sync_mode == wal_sync_mode::FULL ? writer_->flush_and_sync() : writer_->flush();
+        core::hop::emit("wal_worker commit flushed wal_id=%llu err=%d",
+                        static_cast<unsigned long long>(wal_id),
+                        sync_error.contains_error() ? 1 : 0);
         if (sync_error.contains_error()) {
             error(log_,
                   "wal_worker::commit_txn , wal_id : {} , txn : {} , sync : {} , the commit is NOT durable: {}",

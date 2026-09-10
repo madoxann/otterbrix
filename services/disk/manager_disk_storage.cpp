@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include <core/hop_trace.hpp>
+
 namespace services::disk {
 
     using namespace core::filesystem;
@@ -450,7 +452,17 @@ namespace services::disk {
             if (needs_sched) {
                 scheduler_disk_->enqueue(agent.get());
             }
+            core::hop::emit("manager_disk -> agent[%lu].storage_append_inner sent txn=%llu oid=%u needs_sched=%d",
+                            static_cast<unsigned long>(idx),
+                            static_cast<unsigned long long>(ctx.txn.transaction_id),
+                            static_cast<unsigned>(table_oid),
+                            needs_sched ? 1 : 0);
             auto append_r = co_await std::move(fut);
+            core::hop::emit("manager_disk <- agent[%lu].storage_append_inner returned txn=%llu oid=%u err=%d",
+                            static_cast<unsigned long>(idx),
+                            static_cast<unsigned long long>(ctx.txn.transaction_id),
+                            static_cast<unsigned>(table_oid),
+                            append_r.has_error() ? 1 : 0);
             if (append_r.has_error()) {
                 co_return std::move(append_r);
             }
