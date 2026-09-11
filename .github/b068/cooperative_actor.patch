@@ -1,0 +1,173 @@
+--- a/actor-zeta/actor/cooperative_actor.hpp
++++ b/actor-zeta/actor/cooperative_actor.hpp
+@@ -2,6 +2,11 @@
+ 
+ #include <chrono>
+ #include <thread>
++#include <algorithm>
++#include <cstdio>
++#include <mutex>
++#include <typeinfo>
++#include <vector>
+ 
+ #include <actor-zeta/actor/actor_mixin.hpp>
+ #include <actor-zeta/detail/behavior_t.hpp>
+@@ -9,6 +14,49 @@
+ #include <actor-zeta/detail/memory.hpp>
+ #include <actor-zeta/scheduler/resumable.hpp>
+ 
++// B-068 (otterbrix debug branch, applied in CI only): every cooperative actor registers itself so a
++// stall dump can print its mailbox/behavior state, and resume_impl reports parking a busy actor.
++#define ACTOR_ZETA_B068_DEBUG 1
++
++namespace actor_zeta { namespace b068 {
++
++    struct entry_t final {
++        void* actor;
++        void (*write_state)(void*, std::FILE*);
++    };
++
++    struct registry_t final {
++        std::mutex mutex;
++        std::vector<entry_t> actors;
++    };
++
++    inline registry_t& registry() {
++        static auto* instance = new registry_t;
++        return *instance;
++    }
++
++    // Installed by the host to route events into its own timeline; loud events fall back to stderr.
++    inline void (*event_hook)(const char* what, void* actor, const char* type, bool loud) = nullptr;
++
++    inline void report(const char* what, void* actor, const char* type, bool loud) {
++        if (event_hook != nullptr) {
++            event_hook(what, actor, type, loud);
++        } else if (loud) {
++            std::fprintf(stderr, "[actor-zeta b068] %s actor=%p type=%s\n", what, actor, type);
++        }
++    }
++
++    inline void write_actor_states(std::FILE* out) {
++        auto& reg = registry();
++        std::lock_guard<std::mutex> guard(reg.mutex);
++        std::fprintf(out, "--- cooperative actors (%zu)\n", reg.actors.size());
++        for (const auto& entry : reg.actors) {
++            entry.write_state(entry.actor, out);
++        }
++    }
++
++}} // namespace actor_zeta::b068
++
+ namespace actor_zeta { namespace actor {
+ 
+     enum class actor_state : uint8_t {
+@@ -95,7 +143,7 @@
+     template<class Actor, class MailBox>
+     class cooperative_actor
+         : public actor_mixin<Actor> {
+-    private:
++    public:
+         static constexpr bool check_dispatch_traits_exists() {
+             using dispatch_traits_check = typename Actor::dispatch_traits;
+             detail::ignore_unused(sizeof(dispatch_traits_check));
+@@ -276,7 +324,7 @@
+             return result_info;
+         }
+ 
+-    private:
++    public:
+         template<typename Finalize, typename CheckRaceWindow>
+         scheduler::resume_info resume_impl(size_t max_throughput, Finalize& finalize, CheckRaceWindow& check_race_window) noexcept {
+             size_t handled = 0;
+@@ -301,6 +349,9 @@
+                     auto cont = current_behavior_.take_awaited_continuation();
+                     if (cont) {
+                         cont.resume();
++                        if (current_behavior_.is_busy()) {
++                            b068::report("resumed-still-busy@entry", static_cast<void*>(this), typeid(Actor).name(), false);
++                        }
+                     }
+                 } else {
+                     return finalize(scheduler::resume_result::resume, 0, true);
+@@ -322,6 +373,9 @@
+                 if (keep_scheduled && result == scheduler::resume_result::awaiting) {
+                     result = scheduler::resume_result::resume;
+                 }
++                if (result == scheduler::resume_result::awaiting && current_behavior_.is_busy()) {
++                    b068::report("park-busy@entry", static_cast<void*>(this), typeid(Actor).name(), true);
++                }
+                 return finalize(result, 0, keep_scheduled);
+             }
+ 
+@@ -399,6 +453,9 @@
+                     if (keep_scheduled && result == scheduler::resume_result::awaiting) {
+                         result = scheduler::resume_result::resume;
+                     }
++                    if (result == scheduler::resume_result::awaiting && current_behavior_.is_busy()) {
++                        b068::report("park-busy@loop", static_cast<void*>(this), typeid(Actor).name(), true);
++                    }
+                     return finalize(result, handled, keep_scheduled);
+                 }
+             }
+@@ -419,6 +476,9 @@
+             if (keep_scheduled && result == scheduler::resume_result::awaiting) {
+                 result = scheduler::resume_result::resume;
+             }
++            if (result == scheduler::resume_result::awaiting && current_behavior_.is_busy()) {
++                b068::report("park-busy@end", static_cast<void*>(this), typeid(Actor).name(), true);
++            }
+             return finalize(result, handled, keep_scheduled);
+         }
+ 
+@@ -436,6 +496,15 @@
+ #ifndef NDEBUG
+             assert(magic_ == kMagicAlive && "Double-delete!");
+ #endif
++            {
++                auto& b068_registry = b068::registry();
++                std::lock_guard<std::mutex> b068_guard(b068_registry.mutex);
++                auto& actors = b068_registry.actors;
++                actors.erase(std::remove_if(actors.begin(),
++                                            actors.end(),
++                                            [this](const b068::entry_t& entry) { return entry.actor == static_cast<void*>(this); }),
++                             actors.end());
++            }
+             auto current = state_.load(std::memory_order_acquire);
+             int cas_attempts = 0;
+ 
+@@ -495,9 +564,12 @@
+             static_assert(check_dispatch_traits_exists(),
+                           "Actor must define nested 'dispatch_traits'");
+             mailbox().try_block();
++            auto& b068_registry = b068::registry();
++            std::lock_guard<std::mutex> b068_guard(b068_registry.mutex);
++            b068_registry.actors.push_back({static_cast<void*>(this), &cooperative_actor::b068_write_state});
+         }
+ 
+-    private:
++    public:
+         bool try_schedule_after_enqueue(const char* context) noexcept {
+             auto current = state_.load(std::memory_order_acquire);
+             actor_state desired;
+@@ -617,6 +689,20 @@
+             return mailbox_;
+         }
+ 
++        // Runs on the dumping thread: no mailbox().empty()/size() — they fetch, and a fetch unblocks a parked inbox.
++        static void b068_write_state(void* raw, std::FILE* out) {
++            auto* actor = static_cast<cooperative_actor*>(raw);
++            const bool busy = actor->current_behavior_.is_busy();
++            std::fprintf(out,
++                         "  actor=%p type=%s state=%u blocked=%d busy=%d awaited_ready=%d\n",
++                         raw,
++                         typeid(Actor).name(),
++                         static_cast<unsigned>(actor->state_.load(std::memory_order_acquire)),
++                         actor->mailbox().blocked() ? 1 : 0,
++                         busy ? 1 : 0,
++                         busy && actor->current_behavior_.is_awaited_ready() ? 1 : 0);
++        }
++
+         shutdown_guard_t shutdown_guard_;
+ 
+         std::pmr::memory_resource* resource_;
