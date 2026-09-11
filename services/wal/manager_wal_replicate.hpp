@@ -48,6 +48,11 @@ namespace services::wal {
 #ifdef DEV_MODE
         // Guards against spawning a worker per storage namespace dir: test_wal_storage_namespace_dirs.
         std::size_t active_worker_count() const noexcept { return wal_actors_.size(); }
+
+        // While held, write_physical_grow replies wait for release: wal_catalog::growth_append_with_late_wal_reply.
+        void hold_grow_replies();
+        void release_grow_replies();
+        std::size_t held_grow_replies() const;
 #endif
 
         // disk/index feed auto-checkpoint; the dispatcher's mailbox arrives later via set_manager_dispatcher_sync.
@@ -109,12 +114,15 @@ namespace services::wal {
                               components::catalog::oid_t database_oid);
 
         unique_future<core::result_wrapper_t<wal::id_t>>
-        write_physical_add_column(session_id_t session,
-                                  components::catalog::oid_t table_oid,
-                                  std::unique_ptr<components::vector::data_chunk_t> schema_chunk,
-                                  uint64_t column_count,
-                                  uint64_t txn_id,
-                                  components::catalog::oid_t database_oid);
+        write_physical_grow(session_id_t session,
+                            components::catalog::oid_t table_oid,
+                            std::unique_ptr<components::vector::data_chunk_t> schema_chunk,
+                            uint64_t column_count,
+                            std::pmr::vector<components::vector::data_chunk_t> chunks,
+                            uint64_t row_start,
+                            uint64_t row_count,
+                            uint64_t txn_id,
+                            components::catalog::oid_t database_oid);
 
         using dispatch_traits = actor_zeta::implements<wal_contract,
                                                        &manager_wal_replicate_t::load,
@@ -125,7 +133,7 @@ namespace services::wal {
                                                        &manager_wal_replicate_t::write_physical_insert,
                                                        &manager_wal_replicate_t::write_physical_delete,
                                                        &manager_wal_replicate_t::write_physical_update,
-                                                       &manager_wal_replicate_t::write_physical_add_column>;
+                                                       &manager_wal_replicate_t::write_physical_grow>;
 
         wal::id_t next_wal_id();
 
@@ -174,6 +182,13 @@ namespace services::wal {
 
         // Set when the ctor's segment scan couldn't read a segment; while set, every write/commit/truncate refuses.
         core::error_t recovery_error_;
+
+#ifdef DEV_MODE
+        unique_future<void> grow_reply_gate_();
+        mutable std::mutex grow_hold_mutex_;
+        bool grow_hold_{false};
+        std::pmr::vector<actor_zeta::promise<void>> held_grow_replies_{resource_};
+#endif
 
         std::pmr::vector<unique_future<void>> pending_auto_checkpoint_{resource_};
         void poll_auto_checkpoint_();

@@ -25,6 +25,7 @@
 #include "catalog_probe.hpp"
 #include "disk_test_helpers.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <limits>
 #include <thread>
@@ -102,6 +103,24 @@ namespace {
 
         components::execution_context_t ctx() {
             return components::execution_context_t{session_id_t{}, components::table::transaction_data{0, 0}, {}};
+        }
+
+        // Agents and the WAL worker run only here; the disk and WAL pumps poll on their own threads.
+        template<typename Pred>
+        bool drive_until(Pred pred, std::chrono::milliseconds deadline) {
+            const auto until = std::chrono::steady_clock::now() + deadline;
+            while (!pred()) {
+                if (std::chrono::steady_clock::now() >= until) {
+                    return false;
+                }
+                scheduler->run(1000);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1});
+            }
+            return true;
+        }
+
+        void drive_for(std::chrono::milliseconds period) {
+            drive_until([] { return false; }, period);
         }
     };
 
@@ -547,8 +566,7 @@ namespace {
     }
 } // namespace
 
-// The PHYSICAL_ADD_COLUMN write is awaited but drained only after the insert await -- same FIFO
-// WAL worker means it's already complete by then, keeping the handler's single suspension point.
+// write_physical_grow journals the PHYSICAL_ADD_COLUMN and the PHYSICAL_INSERT that needs it in one worker handler.
 TEST_CASE("services::disk::wal_catalog::a_growth_append_journals_the_add_column_ahead_of_the_insert") {
     auto dir = wal_cat_dir() + "/addcol_journaled";
     cleanup_dir(dir);
@@ -639,6 +657,49 @@ TEST_CASE("services::disk::wal_catalog::a_growth_append_journals_the_add_column_
         REQUIRE(add_col_idx >= 0);
         REQUIRE(growth_insert_idx >= 0);
         REQUIRE(add_col_idx < growth_insert_idx);
+    }
+    cleanup_dir(dir);
+}
+
+// The disk agent suspends on the journal before it materializes; a reply that lands after that must still wake it.
+TEST_CASE("services::disk::wal_catalog::growth_append_with_late_wal_reply") {
+    using namespace std::chrono_literals;
+    auto dir = wal_cat_dir() + "/late_grow_reply";
+    cleanup_dir(dir);
+    {
+        fixture fx(dir);
+        auto ns_oid = test_create_namespace(fx, "ns_late_grow");
+        std::vector<components::table::column_definition_t> cols;
+        cols.emplace_back("a", components::types::complex_logical_type{components::types::logical_type::BIGINT});
+        auto table_oid = test_create_table(fx, ns_oid, "t_late_grow", cols);
+        fx.invoke(&manager_disk_t::create_storage_disk,
+                  session_id_t{},
+                  table_oid,
+                  catalog::well_known_oid::main_database,
+                  cols,
+                  /*is_computed=*/false);
+        auto first = fx.invoke(&manager_disk_t::storage_append,
+                               txn_exec_ctx(88, table_oid),
+                               table_oid,
+                               bigint_batch(&fx.resource, {"a"}, 1, 1));
+        REQUIRE_FALSE(first.has_error());
+
+        fx.wal->hold_grow_replies();
+        auto [_, append] = actor_zeta::otterbrix::send(fx.disk->address(),
+                                                       &manager_disk_t::storage_append,
+                                                       txn_exec_ctx(88, table_oid),
+                                                       table_oid,
+                                                       bigint_batch(&fx.resource, {"a", "b"}, 1, 2));
+        REQUIRE(fx.drive_until([&] { return fx.wal->held_grow_replies() == 1; }, 5s));
+        fx.drive_for(300ms);
+        REQUIRE_FALSE(append.is_ready());
+
+        fx.wal->release_grow_replies();
+        INFO("the journal has answered, so the growth append finishes");
+        REQUIRE(fx.drive_until([&] { return append.is_ready(); }, 5s));
+        auto appended = std::move(append).take_ready();
+        REQUIRE_FALSE(appended.has_error());
+        REQUIRE(appended.value().second == 1);
     }
     cleanup_dir(dir);
 }
