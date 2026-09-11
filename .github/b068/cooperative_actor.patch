@@ -154,16 +154,16 @@
              return mailbox_;
          }
  
++        // Runs on the dumping thread: no mailbox().empty()/size() — they fetch, and a fetch unblocks a parked inbox.
 +        static void b068_write_state(void* raw, std::FILE* out) {
 +            auto* actor = static_cast<cooperative_actor*>(raw);
 +            const bool busy = actor->current_behavior_.is_busy();
 +            std::fprintf(out,
-+                         "  actor=%p type=%s state=%u blocked=%d empty=%d busy=%d awaited_ready=%d\n",
++                         "  actor=%p type=%s state=%u blocked=%d busy=%d awaited_ready=%d\n",
 +                         raw,
 +                         typeid(Actor).name(),
 +                         static_cast<unsigned>(actor->state_.load(std::memory_order_acquire)),
 +                         actor->mailbox().blocked() ? 1 : 0,
-+                         actor->mailbox().empty() ? 1 : 0,
 +                         busy ? 1 : 0,
 +                         busy && actor->current_behavior_.is_awaited_ready() ? 1 : 0);
 +        }
