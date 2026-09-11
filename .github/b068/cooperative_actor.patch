@@ -1,5 +1,5 @@
---- a/actor-zeta/actor/cooperative_actor.hpp	2026-09-10 22:05:12.651730666 +0300
-+++ b/actor-zeta/actor/cooperative_actor.hpp	2026-09-10 22:05:12.678581964 +0300
+--- a/actor-zeta/actor/cooperative_actor.hpp
++++ b/actor-zeta/actor/cooperative_actor.hpp
 @@ -2,6 +2,11 @@
  
  #include <chrono>
@@ -90,7 +90,7 @@
                      }
                  } else {
                      return finalize(scheduler::resume_result::resume, 0, true);
-@@ -316,6 +367,9 @@
+@@ -322,6 +373,9 @@
                  if (keep_scheduled && result == scheduler::resume_result::awaiting) {
                      result = scheduler::resume_result::resume;
                  }
@@ -100,7 +100,7 @@
                  return finalize(result, 0, keep_scheduled);
              }
  
-@@ -393,6 +447,9 @@
+@@ -399,6 +453,9 @@
                      if (keep_scheduled && result == scheduler::resume_result::awaiting) {
                          result = scheduler::resume_result::resume;
                      }
@@ -110,7 +110,7 @@
                      return finalize(result, handled, keep_scheduled);
                  }
              }
-@@ -413,6 +470,9 @@
+@@ -419,6 +476,9 @@
              if (keep_scheduled && result == scheduler::resume_result::awaiting) {
                  result = scheduler::resume_result::resume;
              }
@@ -120,7 +120,7 @@
              return finalize(result, handled, keep_scheduled);
          }
  
-@@ -430,6 +490,15 @@
+@@ -436,6 +496,15 @@
  #ifndef NDEBUG
              assert(magic_ == kMagicAlive && "Double-delete!");
  #endif
@@ -136,7 +136,7 @@
              auto current = state_.load(std::memory_order_acquire);
              int cas_attempts = 0;
  
-@@ -489,9 +558,12 @@
+@@ -495,9 +564,12 @@
              static_assert(check_dispatch_traits_exists(),
                            "Actor must define nested 'dispatch_traits'");
              mailbox().try_block();
@@ -150,7 +150,7 @@
          bool try_schedule_after_enqueue(const char* context) noexcept {
              auto current = state_.load(std::memory_order_acquire);
              actor_state desired;
-@@ -611,6 +683,20 @@
+@@ -617,6 +689,20 @@
              return mailbox_;
          }
  

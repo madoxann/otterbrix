@@ -1,0 +1,15 @@
+--- a/actor-zeta/actor/cooperative_actor.hpp
++++ b/actor-zeta/actor/cooperative_actor.hpp
+@@ -307,6 +307,12 @@
+                 }
+             }
+ 
++            // The continuation may have suspended again on a future that is not ready: set_value does not
++            // reschedule, so parking now would lose that wakeup. Stay scheduled, as the loop below does.
++            if (current_behavior_.is_busy()) {
++                return finalize(scheduler::resume_result::resume, 0, true);
++            }
++
+             if (mailbox().empty()) {
+                 auto result = mailbox().try_block()
+                                   ? scheduler::resume_result::awaiting

@@ -723,7 +723,44 @@ namespace services::wal {
                         static_cast<unsigned long long>(txn_id),
                         static_cast<unsigned>(table_oid),
                         static_cast<unsigned long long>(wal_id));
+#ifdef DEV_MODE
+        co_await add_column_reply_gate_();
+#endif
         co_return std::move(result);
     }
+
+#ifdef DEV_MODE
+    void manager_wal_replicate_t::hold_add_column_replies() {
+        std::lock_guard<std::mutex> guard(add_column_hold_mutex_);
+        add_column_hold_ = true;
+    }
+
+    void manager_wal_replicate_t::release_add_column_replies() {
+        std::lock_guard<std::mutex> guard(add_column_hold_mutex_);
+        add_column_hold_ = false;
+        for (auto& reply : held_add_column_replies_) {
+            reply.set_value();
+        }
+        held_add_column_replies_.clear();
+    }
+
+    std::size_t manager_wal_replicate_t::held_add_column_replies() const {
+        std::lock_guard<std::mutex> guard(add_column_hold_mutex_);
+        return held_add_column_replies_.size();
+    }
+
+    manager_wal_replicate_t::unique_future<void> manager_wal_replicate_t::add_column_reply_gate_() {
+        actor_zeta::promise<void> reply(resource());
+        auto gate = reply.get_future();
+        std::lock_guard<std::mutex> guard(add_column_hold_mutex_);
+        if (add_column_hold_) {
+            core::hop::emit("manager_wal add_column reply held");
+            held_add_column_replies_.push_back(std::move(reply));
+        } else {
+            reply.set_value();
+        }
+        return gate;
+    }
+#endif
 
 } // namespace services::wal

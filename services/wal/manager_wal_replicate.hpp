@@ -48,6 +48,12 @@ namespace services::wal {
 #ifdef DEV_MODE
         // Guards against spawning a worker per storage namespace dir: test_wal_storage_namespace_dirs.
         std::size_t active_worker_count() const noexcept { return wal_actors_.size(); }
+
+        // B-068: while held, a PHYSICAL_ADD_COLUMN reply waits for release, so the PHYSICAL_INSERT sent after it is
+        // answered first: test_append_add_column_reply_order.
+        void hold_add_column_replies();
+        void release_add_column_replies();
+        std::size_t held_add_column_replies() const;
 #endif
 
         // disk/index feed auto-checkpoint; the dispatcher's mailbox arrives later via set_manager_dispatcher_sync.
@@ -174,6 +180,13 @@ namespace services::wal {
 
         // Set when the ctor's segment scan couldn't read a segment; while set, every write/commit/truncate refuses.
         core::error_t recovery_error_;
+
+#ifdef DEV_MODE
+        unique_future<void> add_column_reply_gate_();
+        mutable std::mutex add_column_hold_mutex_;
+        bool add_column_hold_{false};
+        std::pmr::vector<actor_zeta::promise<void>> held_add_column_replies_{resource_};
+#endif
 
         std::pmr::vector<unique_future<void>> pending_auto_checkpoint_{resource_};
         void poll_auto_checkpoint_();

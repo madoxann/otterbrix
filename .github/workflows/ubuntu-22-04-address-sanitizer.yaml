@@ -30,6 +30,10 @@ jobs:
           cp ../conanfile.py .
           conan install . --build missing -s build_type=Release -s compiler.cppstd=20
 
+      - name: patch actor-zeta
+        run: |
+          bash .github/actor-zeta/apply_patches.sh .github/actor-zeta/*.patch
+
       - name: build
         env:
           CC: gcc

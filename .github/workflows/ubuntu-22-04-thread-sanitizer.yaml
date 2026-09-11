@@ -35,6 +35,10 @@ jobs:
             -pr:h ../.github/tsan-deps.profile \
             -s build_type=Release -s compiler.cppstd=20
 
+      - name: patch actor-zeta
+        run: |
+          bash .github/actor-zeta/apply_patches.sh .github/actor-zeta/*.patch
+
       # TSan runtime aborts with "unexpected memory mapping" under high-entropy ASLR
       - name: Reduce ASLR entropy for TSan
         run: sudo sysctl vm.mmap_rnd_bits=28

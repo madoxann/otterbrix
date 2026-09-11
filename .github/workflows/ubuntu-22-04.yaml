@@ -45,16 +45,9 @@ jobs:
           cp ../conanfile.py .
           conan install . --build missing -s build_type=Release -s compiler.cppstd=20
 
-      - name: 'B-068: patch actor-zeta (public internals, actor registry, park-while-busy report)'
+      - name: 'patch actor-zeta: fixes, then B-068 diagnostics (actor registry, park-while-busy report)'
         run: |
-          header=$(find ~/.conan2/p -path '*/p/include/actor-zeta/actor/cooperative_actor.hpp')
-          echo "$header"
-          if [ "$(printf '%s\n' "$header" | grep -c .)" -ne 1 ]; then
-            echo "::error::expected exactly one actor-zeta package header"
-            exit 1
-          fi
-          patch -p1 --forward -d "${header%/actor-zeta/actor/cooperative_actor.hpp}" < .github/b068/cooperative_actor.patch
-          grep -q ACTOR_ZETA_B068_DEBUG "$header"
+          bash .github/actor-zeta/apply_patches.sh .github/actor-zeta/*.patch .github/b068/cooperative_actor.patch
 
       - name: build
         env:
